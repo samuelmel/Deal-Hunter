@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import re
 import time
+import unicodedata
 from typing import Any
 from urllib.parse import quote_plus, urljoin
 
@@ -50,14 +51,25 @@ def _parse_price(text: str) -> float | None:
 		return None
 
 
+def _strip_accents(text: str) -> str:
+	# Remove acentos (ex: vídeo → video) para comparação flexível.
+	nfkd = unicodedata.normalize("NFKD", text)
+	return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 def _matches_query(name: str, query: str) -> bool:
 	# Evita itens que apenas citam o termo pesquisado nas especificações.
 	query_terms = [term.lower() for term in re.findall(r"\w+", query) if len(term) > 1]
 	name_lower = name.lower()
 	if not query_terms or not all(term in name_lower for term in query_terms):
+	# Compara sem acentos para lidar com diferenças como video/vídeo.
+	name_clean = _strip_accents(name).lower()
+	query_terms = [_strip_accents(t).lower() for t in re.findall(r"\w+", query) if len(t) > 1]
+	if not query_terms or not all(term in name_clean for term in query_terms):
 		return False
 
 	return name_lower.startswith(query_terms[0]) or query_terms[0] in name_lower
+	return name_clean.startswith(query_terms[0]) or query_terms[0] in name_clean
 
 
 def _extract_products(
@@ -174,20 +186,46 @@ def _collect_offer_products(page: Page, query: str, max_scrolls: int) -> list[di
 	return list(products_by_url.values())
 
 
+def _filter_nvidia_gpu(product: dict[str, Any]) -> bool:
+	# Aceita apenas placas NVIDIA RTX ou GTX.
+	lowered = product["name"].lower()
+	return ("rtx" in lowered or "gtx" in lowered) and "nvidia" in lowered
+
+
+def _filter_amd_cpu(product: dict[str, Any]) -> bool:
+	# Aceita apenas processadores AMD (Ryzen / Threadripper).
+	lowered = product["name"].lower()
+	return "amd" in lowered and ("ryzen" in lowered or "threadripper" in lowered or "processador" in lowered)
+
+
+# Mapa de filtros pré-definidos por categoria
+CATEGORY_FILTERS: dict[str, Any] = {
+	"nvidia_gpu": _filter_nvidia_gpu,
+	"amd_cpu": _filter_amd_cpu,
+}
+
+
 def scrape_kabum(
 	query: str,
 	limit: int | None = 20,
 	headless: bool = True,
 	offers_only: bool = True,
 	max_scrolls: int = 50,
+	filter_fn: Any | None = None,
 ) -> list[dict[str, Any]]:
 	# Pesquisa ofertas na KaBuM aplicando técnicas stealth e comportamento humano.
+	# filter_fn: callable que recebe um dict de produto e retorna True para manter.
+	#             Pode ser uma string de CATEGORY_FILTERS (ex: "nvidia_gpu").
 	if not query.strip():
 		raise ValueError("query must not be empty")
 	if limit is not None and limit < 1:
 		raise ValueError("limit must be greater than zero")
 	if max_scrolls < 1:
 		raise ValueError("max_scrolls must be greater than zero")
+
+	# Resolve filtro por nome caso seja string
+	if isinstance(filter_fn, str):
+		filter_fn = CATEGORY_FILTERS.get(filter_fn)
 
 	stealth_args = [
 		"--disable-blink-features=AutomationControlled",
@@ -210,6 +248,13 @@ def scrape_kabum(
 			if offers_only:
 				_select_offer_filter(page)
 			products = _collect_offer_products(page, query, max_scrolls)
+			# Filter for NVIDIA RTX/GTX GPUs from NVIDIA
+			def _is_target_gpu(name: str) -> bool:
+				lowered = name.lower()
+				return ("rtx" in lowered or "gtx" in lowered) and "nvidia" in lowered
+			products = [p for p in products if _is_target_gpu(p["name"])]
+			if filter_fn is not None:
+				products = [p for p in products if filter_fn(p)]
 			return products if limit is None else products[:limit]
 		finally:
 			browser.close()
@@ -218,3 +263,14 @@ def scrape_kabum(
 if __name__ == "__main__":
 	for product in scrape_kabum("ssd 1tb", limit=5):
 		print(product)
+	# Testa com as 3 categorias configuradas
+	queries = [
+		("placa de video nvidia", "nvidia_gpu"),
+		("ssd 1tb", None),
+		("processador amd ryzen", "amd_cpu"),
+	]
+	for q, filt in queries:
+		print(f"\n=== {q} ===")
+		for product in scrape_kabum(q, limit=5, filter_fn=filt):
+			print(f"  {product['name']} - R${product.get('price', '?')}")
+

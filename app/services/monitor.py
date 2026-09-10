@@ -64,11 +64,16 @@ def monitor_kabum(
 	query: str,
 	database_path: str | Path = "data/deal_hunter.db",
 	headless: bool = True,
+	filter_fn: Any | None = None,
 ) -> dict[str, Any]:
 	# Mantém compatibilidade com a função legada de monitoramento exclusivo da KaBuM.
 	logger.info("Consultando KaBuM (legado): %s", query)
 	products = scrape_kabum(query, limit=None, headless=headless, offers_only=True)
 	logger.info("KaBuM retornou %s ofertas", len(products))
+	# Coleta ofertas da KaBuM para uma única consulta com filtro opcional por categoria.
+	logger.info("Consultando KaBuM: %s", query)
+	products = scrape_kabum(query, limit=None, headless=headless, offers_only=True, filter_fn=filter_fn)
+	logger.info("KaBuM retornou %s ofertas para '%s'", len(products), query)
 	with get_connection(database_path) as connection:
 		first_run, new_products = save_offer_observations(connection, query, products)
 
@@ -78,6 +83,7 @@ def monitor_kabum(
 	products_to_notify = products if first_run else new_products
 	if telegram_token and telegram_chat_id:
 		logger.info("Enviando %s notificações para o Telegram", len(products_to_notify))
+		logger.info("Enviando %s notificações ao Telegram", len(products_to_notify))
 		send_telegram_notifications(telegram_token, telegram_chat_id, products_to_notify)
 	else:
 		logger.warning("Telegram não configurado; notificações não enviadas")
@@ -88,3 +94,15 @@ def monitor_kabum(
 		"new_products": len(products_to_notify),
 		"first_run": first_run,
 	}
+
+
+def monitor_kabum_multiple(
+	queries: list[str],
+	database_path: str | Path = "data/deal_hunter.db",
+	headless: bool = True,
+) -> dict[str, dict[str, Any]]:
+	# Executa monitor_kabum para várias consultas e retorna os resultados agrupados.
+	results: dict[str, dict[str, Any]] = {}
+	for q in queries:
+		results[q] = monitor_kabum(q, database_path=database_path, headless=headless)
+	return results
