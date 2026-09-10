@@ -1525,3 +1525,75 @@ Banco de Dados
 Data Engineering
 DevOps
 ```
+
+---
+
+# Arquitetura atual do pipeline
+
+O Deal Hunter está evoluindo incrementalmente para um pipeline de dados:
+
+```text
+Fontes
+      ↓
+Offer comum
+      ↓
+Normalização
+      ↓
+Classificação por regras
+      ↓
+SQLite
+      ↓
+Histórico de preços
+      ↓
+Análise e Deal Score
+      ↓
+Regra anti-spam
+      ↓
+Telegram
+```
+
+As fontes são isoladas pelo protocolo `Source`. A implementação atual da KaBuM continua em `app/scrapers/kabum.py` e possui um adaptador em `app/sources/kabum.py`. Isso permite adicionar fontes baseadas em API ou scraping sem expor detalhes de coleta ao restante do pipeline.
+
+## Componentes implementados
+
+* `app/models/offer.py`: modelo comum de oferta;
+* `app/sources/base.py`: protocolo para fontes;
+* `app/sources/collection.py`: coleta com falha isolada por fonte;
+* `app/services/normalizer.py`: normalização inicial;
+* `app/services/classifier.py`: classificação determinística por palavras-chave;
+* `app/services/price_analyzer.py`: média, menor preço e distância da média;
+* `app/services/deal_scorer.py`: score explicável de 0 a 100;
+* `app/services/notification_rules.py`: regra inicial anti-spam;
+* `app/database/migrations.py`: schema histórico não destrutivo;
+* `app/database/repositories.py`: persistência de ofertas, preços e notificações.
+
+## Banco de dados
+
+O SQLite continua sendo o armazenamento principal. A tabela legada `offer_observations` é preservada. As novas tabelas `products`, `offers`, `price_history`, `classifications` e `notifications` estruturam o histórico para análises futuras.
+
+## Execução local
+
+Instale as dependências com:
+
+```powershell
+uv sync
+uv run playwright install chromium
+```
+
+Configure `.env` a partir de `.env.example` e execute:
+
+```powershell
+uv run python main.py
+```
+
+Os testes unitários rodam com:
+
+```powershell
+uv run pytest -q
+```
+
+Os testes não fazem requisições reais aos sites. Scrapers devem ser validados separadamente e com responsabilidade, respeitando limites e políticas das fontes.
+
+## Machine Learning futuro
+
+Machine Learning ainda não faz parte do pipeline operacional. Os dados históricos mantêm título original, título normalizado, fonte, loja, preço, URL e data, permitindo futuramente criar um dataset rotulado e substituir o classificador por regras por um modelo treinado.

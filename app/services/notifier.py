@@ -6,16 +6,40 @@ from typing import Any
 from telegram import Bot
 
 
-def format_offer_message(product: dict[str, Any]) -> str:
-	# Monta a mensagem curta enviada ao chat do Telegram.
+def _format_brl(price: float | None) -> str:
+	# Formata valores numéricos como moeda brasileira.
+	return f"R$ {price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if price is not None else "Preço indisponível"
+
+
+def format_offer_message(
+	product: dict[str, Any],
+	analysis: Any | None = None,
+	deal_score: int | None = None,
+) -> str:
+	# Monta uma mensagem detalhada sem quebrar o formato legado.
 	price = product.get("price")
-	formatted_price = f"R$ {price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if price is not None else "Preço indisponível"
-	return (
-		"🚨 NOVA OFERTA NA KABUM!\n\n"
+	lines = [
+		"🔥 POSSÍVEL OPORTUNIDADE",
+		"",
 		f"{product['name']}\n"
-		f"💰 {formatted_price}\n"
-		f"🔗 {product['url']}"
+		f"💰 Preço: {_format_brl(price)}",
+	]
+	if analysis is not None:
+		if analysis.average_price is not None:
+			lines.append(f"📊 Média histórica: {_format_brl(analysis.average_price)}")
+		if analysis.lowest_price is not None:
+			lines.append(f"📉 Menor preço: {_format_brl(analysis.lowest_price)}")
+		if analysis.below_average_percent is not None:
+			lines.append(f"↓ {analysis.below_average_percent:.2f}% abaixo da média")
+	if deal_score is not None:
+		lines.append(f"⭐ Deal Score: {deal_score}/100")
+	lines.extend(
+		[
+			f"🏪 Loja: {product.get('store', 'desconhecida')}",
+			f"🔗 {product['url']}",
+		]
 	)
+	return "\n".join(lines)
 
 
 async def _send_messages(token: str, chat_id: str, products: list[dict[str, Any]]) -> None:

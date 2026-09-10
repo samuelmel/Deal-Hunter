@@ -1,6 +1,52 @@
-name: 'Daily Deal Hunter'
+name: Daily Deal Hunter
+
 on:
     schedule:
-        - cron: '0 0 * * *' # Runs every day at midnight
+        - cron: "0 0 * * *"
     workflow_dispatch:
-        
+
+jobs:
+    monitor:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - name: Checkout
+                uses: actions/checkout@v4
+
+            - name: Setup Python
+                uses: actions/setup-python@v5
+                with:
+                    python-version: "3.12"
+
+            - name: Setup uv
+                uses: astral-sh/setup-uv@v6
+                with:
+                    enable-cache: true
+
+            - name: Install dependencies
+                run: uv sync
+
+            - name: Install Chromium
+                run: uv run playwright install --with-deps chromium
+
+            - name: Restore SQLite history
+                uses: actions/cache/restore@v4
+                with:
+                    path: data
+                    key: deal-hunter-sqlite-${{ github.run_id }}
+                    restore-keys: |
+                        deal-hunter-sqlite-
+
+            - name: Run Deal Hunter
+                env:
+                    DEAL_HUNTER_QUERY: ${{ vars.DEAL_HUNTER_QUERY || 'ssd 1tb' }}
+                    TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+                    TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+                run: uv run python main.py
+
+            - name: Persist SQLite history
+                if: always()
+                uses: actions/cache/save@v4
+                with:
+                    path: data
+                    key: deal-hunter-sqlite-${{ github.run_id }}

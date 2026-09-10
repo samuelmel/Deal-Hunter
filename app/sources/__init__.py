@@ -1,0 +1,1 @@
+"""Interfaces e adaptadores das fontes de ofertas."""
