@@ -1,0 +1,1 @@
+"""Execução do pipeline de ofertas."""

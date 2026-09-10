@@ -5,6 +5,8 @@ from typing import Any
 
 from telegram import Bot
 
+from app.pipeline.runner import PipelineItem
+
 
 def _format_brl(price: float | None) -> str:
 	# Formata valores numéricos como moeda brasileira.
@@ -57,3 +59,27 @@ def send_telegram_notifications(
 	# Inicia o envio assíncrono somente quando há ofertas para notificar.
 	if products:
 		asyncio.run(_send_messages(token, chat_id, products))
+
+
+def send_pipeline_notifications(
+	token: str,
+	chat_id: str,
+	items: list[PipelineItem],
+) -> int:
+	# Envia somente itens aprovados pelo histórico e pelo Deal Score.
+	products: list[dict[str, Any]] = []
+	for item in items:
+		if not item.notify:
+			continue
+		products.append(
+			{
+				"name": item.offer.title,
+				"price": item.offer.price,
+				"store": item.offer.store,
+				"url": item.offer.url,
+				"source": item.offer.source,
+			}
+		)
+	if products:
+		asyncio.run(_send_messages(token, chat_id, products))
+	return len(products)

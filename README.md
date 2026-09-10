@@ -1530,46 +1530,52 @@ DevOps
 
 # Arquitetura atual do pipeline
 
-O Deal Hunter está evoluindo incrementalmente para um pipeline de dados:
+O Deal Hunter utiliza uma arquitetura **transparente e multi-fonte** baseada no protocolo `Source[Offer]`:
 
 ```text
-Fontes
-      ↓
-Offer comum
-      ↓
-Normalização
-      ↓
-Classificação por regras
-      ↓
-SQLite
-      ↓
-Histórico de preços
-      ↓
-Análise e Deal Score
-      ↓
-Regra anti-spam
-      ↓
-Telegram
+       APIs / Feeds / Agregadores / Scrapers
+                         ↓
+                   Source[Offer]
+                         ↓
+                    Offer Comum
+                         ↓
+                   Normalização
+                         ↓
+               Classificação por Regras
+                         ↓
+                      SQLite
+                         ↓
+               Histórico de Preços
+                         ↓
+             Análise de Preço & Deal Score
+                         ↓
+                 Filtro Anti-Spam
+                         ↓
+                 Notificação Telegram
 ```
 
-As fontes são isoladas pelo protocolo `Source`. A implementação atual da KaBuM continua em `app/scrapers/kabum.py` e possui um adaptador em `app/sources/kabum.py`. Isso permite adicionar fontes baseadas em API ou scraping sem expor detalhes de coleta ao restante do pipeline.
+### Fontes Implementadas:
+* `PelandoSource` (`app/sources/pelando.py`): Agregador de ofertas via consulta HTTP com timeout e fallback silencioso.
+* `PromobitSource` (`app/sources/promobit.py`): Agregador de ofertas via consulta HTTP resiliente.
+* `KabumSource` (`app/sources/kabum.py`): Scraper Playwright + BeautifulSoup integrado ao protocolo `Source`.
+* `PichauSource` (`app/sources/pichau.py`): Adaptador resiliente. Em caso de bloqueio anti-bot ou WAF, registra aviso e permite o pipeline continuar.
+* `TerabyteSource` (`app/sources/terabyte.py`): Adaptador resiliente com tratamento de erros gracioso.
+
+### Princípio da Resiliência:
+O pipeline de dados (`app/sources/collection.py`) captura exceções de cada fonte individualmente. Se uma loja ou agregador falhar ou aplicar bloqueios, o sistema registra um aviso no log (`[WARNING] Fonte X indisponível`) e **continua a execução normalmente com as demais fontes saudáveis**.
 
 ## Componentes implementados
 
-* `app/models/offer.py`: modelo comum de oferta;
-* `app/sources/base.py`: protocolo para fontes;
-* `app/sources/collection.py`: coleta com falha isolada por fonte;
-* `app/services/normalizer.py`: normalização inicial;
-* `app/services/classifier.py`: classificação determinística por palavras-chave;
-* `app/services/price_analyzer.py`: média, menor preço e distância da média;
-* `app/services/deal_scorer.py`: score explicável de 0 a 100;
-* `app/services/notification_rules.py`: regra inicial anti-spam;
-* `app/database/migrations.py`: schema histórico não destrutivo;
-* `app/database/repositories.py`: persistência de ofertas, preços e notificações.
-
-## Banco de dados
-
-O SQLite continua sendo o armazenamento principal. A tabela legada `offer_observations` é preservada. As novas tabelas `products`, `offers`, `price_history`, `classifications` e `notifications` estruturam o histórico para análises futuras.
+* `app/models/offer.py`: Modelo comum de oferta independente da origem;
+* `app/sources/base.py`: Protocolo `Source[OfferT]`;
+* `app/sources/collection.py`: Coleta desacoplada com isolamento de falhas por fonte;
+* `app/services/normalizer.py`: Normalização de texto, loja, URL e preços;
+* `app/services/classifier.py`: Classificação determinística por palavras-chave com prioridade;
+* `app/services/price_analyzer.py`: Média histórica, menor preço e distância da média;
+* `app/services/deal_scorer.py`: Score explicável de 0 a 100;
+* `app/services/notification_rules.py`: Regra anti-spam;
+* `app/database/migrations.py`: Schema histórico não destrutivo;
+* `app/database/repositories.py`: Persistência no SQLite.
 
 ## Execução local
 
@@ -1592,8 +1598,5 @@ Os testes unitários rodam com:
 uv run pytest -q
 ```
 
-Os testes não fazem requisições reais aos sites. Scrapers devem ser validados separadamente e com responsabilidade, respeitando limites e políticas das fontes.
+Todos os testes de fontes utilizam mocks e não fazem requisições reais.
 
-## Machine Learning futuro
-
-Machine Learning ainda não faz parte do pipeline operacional. Os dados históricos mantêm título original, título normalizado, fonte, loja, preço, URL e data, permitindo futuramente criar um dataset rotulado e substituir o classificador por regras por um modelo treinado.

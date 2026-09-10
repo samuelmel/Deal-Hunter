@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any, Iterable
 
 from app.models.offer import Offer
+from app.services.classifier import classify_title
 from app.services.normalizer import normalize_text
 
 from .migrations import create_tables
@@ -140,6 +141,45 @@ def save_offer_history(connection: sqlite3.Connection, offers: Iterable[Offer]) 
 
 	connection.commit()
 	return saved
+
+
+def save_classifications(connection: sqlite3.Connection, offers: Iterable[Offer]) -> int:
+	# Persiste a categoria atual para preservar rótulos úteis para ML futuro.
+	create_tables(connection)
+	saved = 0
+	for offer in offers:
+		normalized_name = normalize_text(offer.title)
+		product = connection.execute(
+			"SELECT id FROM products WHERE normalized_name = ?",
+			(normalized_name,),
+		).fetchone()
+		if product is None:
+			continue
+		connection.execute(
+			"INSERT INTO classifications (product_id, category, method) VALUES (?, ?, ?)",
+			(product["id"], classify_title(offer.title), "rules"),
+		)
+		saved += 1
+	connection.commit()
+	return saved
+
+
+def get_latest_price(
+	connection: sqlite3.Connection,
+	url: str,
+	source: str,
+) -> float | None:
+	# Busca o último preço antes da observação atual para aplicar anti-spam.
+	row = connection.execute(
+		"""
+		SELECT price FROM offers
+		WHERE url = ? AND source = ?
+		ORDER BY detected_at DESC, id DESC
+		LIMIT 1
+		""",
+		(url, source),
+	).fetchone()
+	return row["price"] if row else None
 
 
 def record_notification(

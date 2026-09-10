@@ -1,20 +1,63 @@
 from __future__ import annotations
 
-import os
 import logging
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from dotenv import load_dotenv
 
 from app.database.connection import get_connection
 from app.database.repositories import save_offer_observations
+from app.models.offer import Offer
+from app.pipeline.runner import PipelineResult, run_pipeline
 from app.scrapers.kabum import scrape_kabum
+from app.sources.base import Source
+from app.sources.kabum import KabumSource
+from app.sources.pelando import PelandoSource
+from app.sources.pichau import PichauSource
+from app.sources.promobit import PromobitSource
+from app.sources.terabyte import TerabyteSource
 
-from .notifier import send_telegram_notifications
+from .notifier import send_pipeline_notifications, send_telegram_notifications
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_default_sources(headless: bool = True) -> list[Source[Offer]]:
+	# Retorna todas as fontes ativas desacopladas.
+	return [
+		PelandoSource(),
+		PromobitSource(),
+		KabumSource(headless=headless),
+		PichauSource(headless=headless),
+		TerabyteSource(headless=headless),
+	]
+
+
+def monitor_sources(
+	query: str,
+	database_path: str | Path = "data/deal_hunter.db",
+	headless: bool = True,
+	sources: Iterable[Source[Offer]] | None = None,
+) -> PipelineResult:
+	# Executa a coleta pelas abstrações de Source e grava no histórico normalizado.
+	active_sources = list(sources) if sources is not None else get_default_sources(headless=headless)
+	result = run_pipeline(
+		active_sources,
+		query,
+		database_path=database_path,
+	)
+	load_dotenv()
+	token = os.getenv("TELEGRAM_BOT_TOKEN")
+	chat_id = os.getenv("TELEGRAM_CHAT_ID")
+	if token and chat_id:
+		sent = send_pipeline_notifications(token, chat_id, list(result.items))
+		logger.info("Telegram enviou %s oportunidades", sent)
+	else:
+		logger.warning("Telegram não configurado; oportunidades não enviadas")
+	return result
 
 
 def monitor_kabum(
@@ -22,8 +65,8 @@ def monitor_kabum(
 	database_path: str | Path = "data/deal_hunter.db",
 	headless: bool = True,
 ) -> dict[str, Any]:
-	# Coleta, salva e notifica apenas as mudanças encontradas na execução.
-	logger.info("Consultando KaBuM: %s", query)
+	# Mantém compatibilidade com a função legada de monitoramento exclusivo da KaBuM.
+	logger.info("Consultando KaBuM (legado): %s", query)
 	products = scrape_kabum(query, limit=None, headless=headless, offers_only=True)
 	logger.info("KaBuM retornou %s ofertas", len(products))
 	with get_connection(database_path) as connection:
@@ -32,7 +75,6 @@ def monitor_kabum(
 	load_dotenv()
 	telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
 	telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
-	# A primeira execução envia o inventário inicial; depois envia só novidades.
 	products_to_notify = products if first_run else new_products
 	if telegram_token and telegram_chat_id:
 		logger.info("Enviando %s notificações para o Telegram", len(products_to_notify))
